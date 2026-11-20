@@ -1,0 +1,16 @@
+# Secrets
+.env
+riego-web/.env
+
+# Firmware binaries
+firmware/
+
+# Astro / Node
+riego-web/node_modules/
+riego-web/dist/
+riego-web/.astro/
+
+# Python
+__pycache__/
+*.pyc
+

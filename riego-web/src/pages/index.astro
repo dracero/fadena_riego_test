@@ -1,0 +1,325 @@
+---
+const brokerUrl = import.meta.env.PUBLIC_MQTT_URL ?? "";
+const mqttUser = import.meta.env.PUBLIC_MQTT_USER ?? "";
+const mqttPass = import.meta.env.PUBLIC_MQTT_PASS ?? "";
+const topicEstado = import.meta.env.PUBLIC_TOPIC_ESTADO ?? "fadena/riego/estado";
+const topicCmd = import.meta.env.PUBLIC_TOPIC_CMD ?? "fadena/riego/cmd";
+---
+
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Riego IoT — ESP32-S3</title>
+    <style>
+      :root {
+        --bg: #0b1120;
+        --card: #111827;
+        --border: #1f2937;
+        --text: #f3f4f6;
+        --muted: #9ca3af;
+        --green: #22c55e;
+        --red: #ef4444;
+        --amber: #f59e0b;
+        --blue: #3b82f6;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        padding: 2rem 1rem;
+      }
+
+      .container {
+        max-width: 820px;
+        margin: 0 auto;
+        display: grid;
+        gap: 1.25rem;
+      }
+
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 1.5rem;
+        font-weight: 700;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.35rem 0.75rem;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        background: var(--card);
+        border: 1px solid var(--border);
+      }
+
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--amber);
+      }
+      .badge.ok .dot { background: var(--green); }
+      .badge.err .dot { background: var(--red); }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 1rem;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem;
+      }
+
+      .label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        margin-bottom: 0.4rem;
+      }
+
+      .value {
+        font-size: 2rem;
+        font-weight: 700;
+      }
+
+      .sub {
+        margin-top: 0.35rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+
+      button {
+        border: 0;
+        border-radius: 8px;
+        padding: 0.75rem 1.2rem;
+        font-size: 0.95rem;
+        font-weight: 600;
+        cursor: pointer;
+        color: #fff;
+        transition: opacity 0.15s ease, transform 0.05s ease;
+      }
+
+      button:hover:not(:disabled) { opacity: 0.9; }
+      button:active:not(:disabled) { transform: scale(0.98); }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+      .btn-start { background: var(--green); color: #052e16; }
+      .btn-stop  { background: var(--blue); }
+      .btn-reset { background: var(--red); }
+
+      .log {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.82rem;
+        color: var(--muted);
+        max-height: 200px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+
+      .log-entry {
+        padding: 0.25rem 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+    </style>
+  </head>
+  <body>
+    <main
+      class="container"
+      id="app"
+      data-broker={brokerUrl}
+      data-user={mqttUser}
+      data-pass={mqttPass}
+      data-topic-estado={topicEstado}
+      data-topic-cmd={topicCmd}
+    >
+      <header>
+        <h1>Sistema de Riego IoT</h1>
+        <div id="status-badge" class="badge">
+          <span class="dot"></span>
+          <span id="status-text">Conectando...</span>
+        </div>
+      </header>
+
+      <section class="grid">
+        <article class="card">
+          <div class="label">Temperatura</div>
+          <div class="value" id="temp-val">-- °C</div>
+          <div class="sub">Sensor DHT22</div>
+        </article>
+
+        <article class="card">
+          <div class="label">Humedad</div>
+          <div class="value" id="hum-val">-- %</div>
+          <div class="sub">Humedad relativa</div>
+        </article>
+
+        <article class="card">
+          <div class="label">Riego</div>
+          <div class="value" id="riego-val">--</div>
+          <div class="sub" id="last-update">Esperando datos...</div>
+        </article>
+      </section>
+
+      <section class="card">
+        <div class="label" style="margin-bottom: 0.75rem;">Control remoto</div>
+        <div class="controls">
+          <button id="btn-regar" class="btn-start" disabled>Iniciar riego</button>
+          <button id="btn-no-regar" class="btn-stop" disabled>Detener riego</button>
+          <button id="btn-reset" class="btn-reset" disabled>Reiniciar ESP32</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="label" style="margin-bottom: 0.5rem;">Registro de mensajes</div>
+        <div id="log" class="log">
+          <div class="log-entry">Iniciando cliente MQTT over WebSockets...</div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      import mqtt from "mqtt";
+
+      const root = document.getElementById("app")!;
+      const brokerUrl = root.dataset.broker!;
+      const username = root.dataset.user!;
+      const password = root.dataset.pass!;
+      const topicEstado = root.dataset.topicEstado!;
+      const topicCmd = root.dataset.topicCmd!;
+
+      const badge = document.getElementById("status-badge")!;
+      const statusText = document.getElementById("status-text")!;
+      const tempVal = document.getElementById("temp-val")!;
+      const humVal = document.getElementById("hum-val")!;
+      const riegoVal = document.getElementById("riego-val")!;
+      const lastUpdate = document.getElementById("last-update")!;
+      const logEl = document.getElementById("log")!;
+
+      const btnRegar = document.getElementById("btn-regar") as HTMLButtonElement;
+      const btnNoRegar = document.getElementById("btn-no-regar") as HTMLButtonElement;
+      const btnReset = document.getElementById("btn-reset") as HTMLButtonElement;
+
+      function addLog(msg: string) {
+        const entry = document.createElement("div");
+        entry.className = "log-entry";
+        const time = new Date().toLocaleTimeString();
+        entry.textContent = `[${time}] ${msg}`;
+        logEl.prepend(entry);
+        while (logEl.children.length > 15) {
+          logEl.lastElementChild?.remove();
+        }
+      }
+
+      function setConnected(connected: boolean, label: string, err = false) {
+        badge.classList.remove("ok", "err");
+        if (connected) badge.classList.add("ok");
+        else if (err) badge.classList.add("err");
+        statusText.textContent = label;
+        btnRegar.disabled = !connected;
+        btnNoRegar.disabled = !connected;
+        btnReset.disabled = !connected;
+      }
+
+      const client = mqtt.connect(brokerUrl, {
+        username,
+        password,
+        clientId: `astro_web_${Math.random().toString(16).slice(2, 8)}`,
+        clean: true,
+        reconnectPeriod: 3000,
+      });
+
+      client.on("connect", () => {
+        setConnected(true, "Conectado");
+        addLog(`Conectado a HiveMQ Cloud`);
+        client.subscribe(topicEstado, (err) => {
+          if (err) {
+            addLog(`Error al suscribir: ${err.message}`);
+          } else {
+            addLog(`Suscripto a ${topicEstado}`);
+          }
+        });
+      });
+
+      client.on("reconnect", () => {
+        setConnected(false, "Reconectando...");
+      });
+
+      client.on("close", () => {
+        setConnected(false, "Desconectado");
+      });
+
+      client.on("error", (err) => {
+        setConnected(false, "Error de conexión", true);
+        addLog(`Error: ${err.message}`);
+      });
+
+      client.on("message", (_topic, payload) => {
+        const raw = payload.toString();
+        try {
+          const data = JSON.parse(raw);
+          if (typeof data.temp === "number") {
+            tempVal.textContent = `${data.temp.toFixed(1)} °C`;
+          }
+          if (typeof data.humidity === "number") {
+            humVal.textContent = `${data.humidity.toFixed(1)} %`;
+          }
+          if (typeof data.irrigation_active === "boolean") {
+            riegoVal.textContent = data.irrigation_active ? "ACTIVO" : "APAGADO";
+            riegoVal.style.color = data.irrigation_active ? "var(--green)" : "var(--text)";
+          }
+          const now = new Date().toLocaleTimeString();
+          lastUpdate.textContent = `Actualizado ${now} (${data.client_id ?? "ESP32"})`;
+          addLog(`Estado: ${data.temp}°C, ${data.humidity}%, riego=${data.irrigation_active}`);
+        } catch {
+          addLog(`Mensaje: ${raw}`);
+        }
+      });
+
+      function sendCmd(cmd: "regar" | "no_regar" | "reset") {
+        client.publish(topicCmd, cmd, { qos: 0 }, (err) => {
+          if (err) {
+            addLog(`Error enviando '${cmd}': ${err.message}`);
+          } else {
+            addLog(`Comando enviado: ${cmd}`);
+          }
+        });
+      }
+
+      btnRegar.addEventListener("click", () => sendCmd("regar"));
+      btnNoRegar.addEventListener("click", () => sendCmd("no_regar"));
+      btnReset.addEventListener("click", () => sendCmd("reset"));
+    </script>
+  </body>
+</html>
+
